@@ -62,9 +62,9 @@ This project develops a local, AI-powered yoga assistant application that provid
 Follow this sequenced plan for incremental development. Each step includes subtasks with checkboxes. Test after each step before proceeding. Code in `yoga_tui.py`; commit to Git for version control.
 
 ### Step 1: Setup and Environment (30-45 mins)
-- [ ] Create project directory and virtual environment: `python -m venv yoga_tui_env`.
-- [ ] Activate venv and install dependencies: `pip install opencv-python mediapipe ollama pyttsx3 rich`.
-- [ ] Add script skeleton with imports:
+- [x] Create project directory and virtual environment: `python -m venv yoga_tui_env`.
+- [x] Activate venv and install dependencies: `pip install opencv-python mediapipe ollama pyttsx3 rich`.
+- [x] Add script skeleton with imports:
   ```python
   import cv2
   import mediapipe as mp
@@ -83,16 +83,16 @@ Follow this sequenced plan for incremental development. Each step includes subta
   import threading  # For potential non-blocking TTS
   console = Console()
   ```
-- [ ] Add argparse for flags (e.g., `--video-window`, `--model` default 'qwen2-vl:7b').
-- [ ] Print welcome message in styled ASCII (use Rich Text/Panel for blocky header like "YOGA TUI").
+- [x] Add argparse for flags (e.g., `--video-window`, `--model` default 'qwen2-vl:7b').
+- [x] Print welcome message in styled ASCII (use Rich Text/Panel for blocky header like "YOGA TUI").
 - **Test**: Run script; ensure no errors, see styled welcome in terminal.
 
 ### Step 2: Input Module - OpenCV for Frame Ingestion (45 mins)
-- [ ] Implement webcam capture: `cap = cv2.VideoCapture(0)`; add mirror flip `frame = cv2.flip(frame, 1)`.
-- [ ] Create main loop: `while True: success, frame = cap.read(); if not success: break;`.
-- [ ] If `--video-window`: Initialize `cv2.namedWindow('Yoga Feed')`.
-- [ ] For terminal: Print frame metadata (e.g., "Frame: 720p @ FPS" in Rich Text).
-- [ ] Add exit handling: `if cv2.waitKey(1) & 0xFF == ord('q'): break` (if window enabled).
+- [x] Implement webcam capture: `cap = cv2.VideoCapture(0)`; add mirror flip `frame = cv2.flip(frame, 1)`.
+- [x] Create main loop: `while True: success, frame = cap.read(); if not success: break;`.
+- [x] If `--video-window`: Initialize `cv2.namedWindow('Yoga Feed')`.
+- [x] For terminal: Print frame metadata (e.g., "Frame: 720p @ FPS" in Rich Text).
+- [x] Add exit handling: `if cv2.waitKey(1) & 0xFF == ord('q'): break` (if window enabled).
 - **Test**: Run with/without `--video-window`. Without: Terminal logs frames. With: Window shows live mirror feed. Wave to confirm.
 
 ### Step 3: Detection Module - MediaPipe for Landmarks (45 mins)
