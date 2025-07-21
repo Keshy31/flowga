@@ -93,23 +93,23 @@ Follow this sequenced plan for incremental development. Each step includes subta
 - [x] If `--video-window`: Initialize `cv2.namedWindow('Yoga Feed')`.
 - [x] For terminal: Print frame metadata (e.g., "Frame: 720p @ FPS" in Rich Text).
 - [x] Add exit handling: `if cv2.waitKey(1) & 0xFF == ord('q'): break` (if window enabled).
-- **Test**: Run with/without `--video-window`. Without: Terminal logs frames. With: Window shows live mirror feed. Wave to confirm.
+- [x] **Test**: Run with/without `--video-window`. Without: Terminal logs frames. With: Window shows live mirror feed. Wave to confirm.
 
 ### Step 3: Detection Module - MediaPipe for Landmarks (45 mins)
-- [ ] Initialize MediaPipe: `mp_pose = mp.solutions.pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)`.
-- [ ] In loop: `results = mp_pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))`.
-- [ ] Extract landmarks: If `results.pose_landmarks`, get list of dicts with joint names and coords.
+- [x] Initialize MediaPipe: `mp_pose = mp.solutions.pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)`.
+- [x] In loop: `results = mp_pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))`.
+- [x] Extract landmarks: If `results.pose_landmarks`, get list of dicts with joint names and coords.
 - [ ] For terminal: Build Rich Table for landmarks (columns: Joint, X, Y, Visibility); add simple ASCII stick figure (custom function mapping coords to char grid).
-- [ ] For video window (if enabled): Draw landmarks using `mp.solutions.drawing_utils.draw_landmarks(frame, results.pose_landmarks)`.
-- [ ] Update display: Terminal prints table; window shows overlaid frame via `cv2.imshow('Yoga Feed', frame)`.
-- **Test**: Perform basic poses (e.g., T-pose). Terminal shows table/ASCII; window (if on) shows skeleton. Ensure real-time (<50ms lag).
+- [x] For video window (if enabled): Draw landmarks using `mp.solutions.drawing_utils.draw_landmarks(frame, results.pose_landmarks)`.
+- [x] Update display: Terminal prints table; window shows overlaid frame via `cv2.imshow('Yoga Feed', frame)`.
+- [x] **Test**: Perform basic poses (e.g., T-pose). Terminal shows table/ASCII; window (if on) shows skeleton. Ensure real-time (<50ms lag).
 
 ### Step 4: Analysis Module - Ollama VLM for Inference (1 hour)
-- [ ] Create analyze function: Encode frame to base64; build prompt with landmarks (e.g., "Analyze yoga pose image with keypoints: [list]. Output JSON: {'pose': 'name', 'feedback': 'tips', 'score': 1-10}").
-- [ ] Query: `response = ollama.chat(model=args.model, messages=[{'role': 'user', 'content': prompt, 'images': [base64_image]}])`.
-- [ ] Parse JSON from response; throttle calls (e.g., every 5s using time check).
-- [ ] For terminal: Print parsed feedback in Rich Syntax (JSON highlighted like code).
-- **Test**: Use static test image first (load via cv2.imread); then integrate to loop. Query on a yoga photo—verify sensible JSON in terminal.
+- [x] Create analyze function: Encode frame to base64; build prompt with landmarks (e.g., "Analyze yoga pose image with keypoints: [list]. Output JSON: {'pose': 'name', 'feedback': 'tips', 'score': 1-10}").
+- [x] Query: `response = ollama.chat(model=args.model, messages=[{'role': 'user', 'content': prompt, 'images': [base64_image]}])`.
+- [x] Parse JSON from response; throttle calls (e.g., every 5s using time check).
+- [x] For terminal: Print parsed feedback in Rich Syntax (JSON highlighted like code).
+- [x] **Test**: Use static test image first (load via cv2.imread); then integrate to loop. Query on a yoga photo—verify sensible JSON in terminal.
 
 ### Step 5: Tracking Module - Custom Logic for Session State (45 mins)
 - [ ] Initialize state: `pose_history = defaultdict(list)`; `current_pose = None; start_time = None`.

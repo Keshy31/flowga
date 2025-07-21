@@ -13,15 +13,48 @@ import base64
 from collections import defaultdict
 import argparse
 import threading
+import json
 
 # Initialize Rich Console
 console = Console()
+
+def analyze_pose(model_name, base64_image, landmarks_str):
+    """Analyzes the pose using Ollama VLM and returns structured feedback."""
+    try:
+        prompt = (
+            "You are a yoga instructor AI. Analyze the provided image and the keypoints of the person's pose. "
+            "Identify the yoga pose. Provide specific, constructive feedback on their alignment. "
+            "Finally, give a score from 1 to 10 on the accuracy of the pose. "
+            f"Here are the landmarks: {landmarks_str}. "
+            "Respond ONLY with a single JSON object in the format: "
+            '{"pose": "<pose_name>", "feedback": "<your_feedback>", "score": <score_number>}'
+        )
+
+        response = ollama.chat(
+            model=model_name,
+            messages=[
+                {
+                    'role': 'user',
+                    'content': prompt,
+                    'images': [base64_image]
+                }
+            ]
+        )
+        
+        # Extract and parse the JSON content
+        content = response['message']['content']
+        feedback_json = json.loads(content)
+        return feedback_json
+
+    except Exception as e:
+        console.print(f"[bold red]Error during analysis: {e}[/bold red]")
+        return None
 
 def main():
     """Main function to run the Yoga TUI application."""
     parser = argparse.ArgumentParser(description="AI Powered Yoga Pose Feedback and Tracker")
     parser.add_argument("--video-window", action="store_true", help="Display the webcam feed in a separate GUI window.")
-    parser.add_argument("--model", type=str, default="qwen2-vl:7b", help="The Ollama VLM model to use for analysis.")
+    parser.add_argument("--model", type=str, default="qwen2.5vl:7b", help="The Ollama VLM model to use for analysis.")
     args = parser.parse_args()
 
     # Display Welcome Message
@@ -43,6 +76,15 @@ def main():
     if args.video_window:
         cv2.namedWindow('Yoga Feed', cv2.WINDOW_NORMAL)
 
+    # Initialize MediaPipe Pose
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    mp_drawing = mp.solutions.drawing_utils
+
+    # Analysis variables
+    last_analysis_time = 0
+    analysis_interval = 5  # seconds
+
     try:
         while True:
             success, frame = cap.read()
@@ -53,9 +95,48 @@ def main():
             # Mirror the frame for a more intuitive display
             frame = cv2.flip(frame, 1)
 
+            # Process frame with MediaPipe
+            # Convert the BGR image to RGB
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = pose.process(rgb_frame)
+
+            # Draw landmarks on the frame
+            if results.pose_landmarks:
+                if args.video_window:
+                    mp_drawing.draw_landmarks(
+                        frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+                
+                current_time = time.time()
+                if current_time - last_analysis_time > analysis_interval:
+                    last_analysis_time = current_time
+
+                    # Encode frame to base64
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    base64_image = base64.b64encode(buffer).decode('utf-8')
+
+                    # Get landmarks as a string
+                    landmark_list = []
+                    for landmark in results.pose_landmarks.landmark:
+                        landmark_list.append(f"({landmark.x:.2f}, {landmark.y:.2f})")
+                    landmarks_str = ", ".join(landmark_list)
+
+                    # Get AI feedback
+                    feedback = analyze_pose(args.model, base64_image, landmarks_str)
+                    if feedback:
+                        feedback_panel = Panel(
+                            Text(json.dumps(feedback, indent=2), style="white"),
+                            title="AI Feedback",
+                            border_style="cyan"
+                        )
+                        console.print(feedback_panel)
+
+                console.print("Pose detected!", end='\r')
+            else:
+                console.print("No pose detected", end='\r')
+
             # Display frame metadata in terminal (example)
             h, w, _ = frame.shape
-            console.print(f"Frame: {w}x{h}", end='\r')
+            # console.print(f"Frame: {w}x{h}", end='\r') # Replaced by pose status
 
             if args.video_window:
                 cv2.imshow('Yoga Feed', frame)
