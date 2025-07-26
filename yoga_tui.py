@@ -8,6 +8,7 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.text import Text
 from rich.table import Table
+from rich.theme import Theme
 import time
 import os
 import base64
@@ -17,8 +18,22 @@ import threading
 import json
 import queue
 
-# Initialize Rich Console
-console = Console()
+# Initialize Rich Console with the Dracula theme
+dracula_theme = Theme({
+    "info": "#8be9fd",      # Cyan
+    "warning": "#f1fa8c",   # Yellow
+    "error": "#ff5555",      # Red
+    "success": "#50fa7b",   # Green
+    "comment": "#6272a4",   # Gray
+    "keyword": "#ff79c6",   # Pink
+    "string": "#f1fa8c",   # Yellow
+    "number": "#bd93f9",   # Purple
+    "class": "#50fa7b",      # Green
+    "method": "#8be9fd",   # Cyan
+    "panel_border": "#6272a4", # Gray
+    "progress_bar": "#bd93f9", # Purple
+})
+console = Console(theme=dracula_theme)
 
 # Shared TTS engine and a lock for thread-safe operations.
 # A single engine is used to allow for speech interruption.
@@ -36,8 +51,8 @@ landmark_names = [
 
 def create_pose_table(results):
     """Creates a Rich table to display pose landmarks."""
-    table = Table(title="Pose Landmarks", show_header=True, header_style="bold magenta")
-    table.add_column("ID", style="dim", width=3)
+    table = Table(title="Pose Landmarks", show_header=True, header_style="bold keyword")
+    table.add_column("ID", style="comment", width=3)
     table.add_column("Landmark", width=20)
     table.add_column("Visibility", justify="right")
 
@@ -52,9 +67,9 @@ def create_pose_table(results):
 
 def create_tracking_table(pose_history, current_pose=None, current_pose_start_time=0, is_final_summary=False):
     """Creates a Rich table to display pose history and session tracking."""
-    table = Table(show_header=True, header_style="bold cyan")
+    table = Table(show_header=True, header_style="bold info")
     table.add_column("Pose", style="white")
-    table.add_column("Duration (s)", justify="right", style="green")
+    table.add_column("Duration (s)", justify="right", style="success")
 
     temp_history = pose_history.copy()
     if current_pose and current_pose != "N/A":
@@ -65,7 +80,7 @@ def create_tracking_table(pose_history, current_pose=None, current_pose_start_ti
 
     if is_final_summary:
         table.title = "Final Session Summary"
-        table.add_column("Time (%)", justify="right", style="yellow")
+        table.add_column("Time (%)", justify="right", style="warning")
         poses_to_show = sorted_poses
         total_duration = sum(duration for _, duration in poses_to_show)
         table.show_footer = True
@@ -79,7 +94,7 @@ def create_tracking_table(pose_history, current_pose=None, current_pose_start_ti
     for pose, duration in poses_to_show:
         pose_name = pose
         if not is_final_summary and pose == current_pose:
-            pose_name = f"[bold cyan]{pose} (current)[/bold cyan]"
+            pose_name = f"[bold info]{pose} (current)[/bold info]"
         
         row = [pose_name, f"{duration:.1f}"]
         if is_final_summary and total_duration > 0:
@@ -119,7 +134,7 @@ def analyze_pose(model_name, base64_image, landmarks_str):
         return feedback_json
 
     except Exception as e:
-        console.print(f"[bold red]Error during analysis: {e}[/bold red]")
+        console.print(f"[bold error]Error during analysis: {e}[/bold error]")
         return None
 
 def stop_current_speech():
@@ -129,7 +144,7 @@ def stop_current_speech():
             # This call interrupts the engine's current speech.
             engine.stop()
     except Exception as e:
-        console.print(f"[bold red]Error stopping speech: {e}[/bold red]")
+        console.print(f"[bold error]Error stopping speech: {e}[/bold error]")
 
 def main():
     """Main function to run the Yoga TUI application."""
@@ -141,28 +156,28 @@ def main():
     args = parser.parse_args()
 
     ascii_art = r"""
-[bold deep_sky_blue1]
+[bold method]
 ███████╗██╗      ██████╗ ██╗    ██╗ ██████╗  █████╗ 
 ██╔════╝██║     ██╔═══██╗██║    ██║██╔════╝ ██╔══██╗
 █████╗  ██║     ██║   ██║██║ █╗ ██║██║  ███╗███████║
 ██╔══╝  ██║     ██║   ██║██║███╗██║██║   ██║██╔══██║
 ██║     ███████╗╚██████╔╝╚███╔███╔╝╚██████╔╝██║  ██║
-╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝[/bold deep_sky_blue1]
+╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝[/bold method]
     """
     console.print(ascii_art)
-    console.print(Text("Your Personal AI Yoga Instructor", justify="center", style="italic bright_blue"))
-    console.print(f"\nUsing model: [bold cyan]{args.model}[/bold cyan]")
+    console.print(Text("Your Personal AI Yoga Instructor", justify="center", style="italic info"))
+    console.print(f"\nUsing model: [bold info]{args.model}[/bold info]")
     if args.video_window:
-        console.print("Video window display is [bold green]enabled[/bold green].")
+        console.print("Video window display is [bold success]enabled[/bold success].")
     else:
-        console.print("Video window display is [bold red]disabled[/bold red].")
+        console.print("Video window display is [bold error]disabled[/bold error].")
 
     # --- TTS Event Handler ---
     def on_finish(name, completed):
         # This callback runs in the main thread after speech finishes.
         # `completed` is True if the speech finished, False if interrupted.
         if completed:
-            console.print(f"[dim]Finished speaking.[/dim]")
+            console.print(f"[comment]Finished speaking.[/comment]")
 
     engine.connect('finished-utterance', on_finish)
 
@@ -175,7 +190,7 @@ def main():
     # Initialize camera
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
-        console.print("[bold red]Error: Could not open camera.[/bold red]")
+        console.print("[bold error]Error: Could not open camera.[/bold error]")
         return
 
     # --- Initialize TTS queue ---
@@ -228,7 +243,7 @@ def main():
 
                 ret, frame = cap.read()
                 if not ret:
-                    console.print("[bold red]Error: Could not read frame.[/bold red]")
+                    console.print("[bold error]Error: Could not read frame.[/bold error]")
                     break
 
                 # Flip frame for mirror effect
@@ -301,14 +316,16 @@ def main():
                 with feedback_lock:
                     score = latest_feedback.get('score', 0)
                     if score >= 8:
-                        border_style = "green"
+                        border_style = "success"
                     elif score >= 5:
-                        border_style = "yellow"
+                        border_style = "warning"
                     else:
-                        border_style = "red"
+                        border_style = "error"
 
+                    feedback_text = latest_feedback.get('feedback', 'Waiting for analysis...')
+                    pose_name = latest_feedback.get('pose', 'N/A')
                     feedback_panel = Panel(
-                        Text(f"Pose: {latest_feedback['pose']}\nFeedback: {latest_feedback['feedback']}\nScore: {latest_feedback['score']}/10", style="white"),
+                        Text(f"Pose: {pose_name}\nFeedback: {feedback_text}\nScore: {latest_feedback.get('score', 0)}/10", style="white"),
                         title="AI Feedback",
                         border_style=border_style
                     )
@@ -341,9 +358,9 @@ def main():
             pass
         
         # --- Display Final Session Summary ---
-        console.print("\n[bold magenta]Session Complete![/bold magenta]")
+        console.print("\n[bold keyword]Session Complete![/bold keyword]")
         final_summary_table = create_tracking_table(pose_history, is_final_summary=True)
-        console.print(Panel(final_summary_table, title="Pose Session Summary", border_style="magenta"))
+        console.print(Panel(final_summary_table, title="Pose Session Summary", border_style="keyword"))
         console.print("\n[bold]Session ended. Goodbye![/bold]")
 
 if __name__ == "__main__":
