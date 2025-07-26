@@ -105,11 +105,13 @@ def main():
 
     # --- Shared state for analysis results ---
     latest_feedback = {
-        "pose": "N/A",
-        "feedback": "Position yourself in frame to start.",
-        "score": 0
+        "lock": threading.Lock(),
+        "data": {
+            "pose": "N/A",
+            "feedback": "Position yourself in frame to start.",
+            "score": 0
+        }
     }
-    feedback_lock = threading.Lock()
 
     # --- Pose tracking variables ---
     pose_history = defaultdict(float)
@@ -180,27 +182,28 @@ def main():
                 # --- Pose Analysis Trigger ---
                 current_time = time.time()
                 if results.pose_landmarks:
-                    if current_time - last_analysis_time >= args.analysis_interval:
-                        last_analysis_time = current_time
-
-                        # This is a non-blocking call that passes copies to the thread
+                    # Trigger analysis immediately on the first detection, then respect the interval
+                    if (last_analysis_time == 0 or (current_time - last_analysis_time >= args.analysis_interval)) and (analysis_thread is None or not analysis_thread.is_alive()):
+                        frame_for_analysis = frame.copy()
                         analysis_thread = threading.Thread(
                             target=analysis_worker, 
-                            args=(frame.copy(), results.pose_landmarks, args, console, tts_queue, log_queue, latest_feedback), 
+                            args=(frame_for_analysis, results.pose_landmarks, args, console, tts_queue, log_queue, latest_feedback), 
                             daemon=True
                         )
                         analysis_thread.start()
+                        last_analysis_time = current_time
 
                 # --- Check for pose change and update history ---
-                with feedback_lock:
-                    if latest_feedback["pose"] != "N/A" and latest_feedback["pose"] != current_pose:
+                with latest_feedback['lock']:
+                    feedback_data = latest_feedback['data']
+                    if feedback_data and feedback_data.get('pose') != 'N/A' and feedback_data.get('pose') != current_pose:
                         # Log duration for the previous pose
                         if current_pose != "N/A":
                             duration = time.time() - current_pose_start_time
                             pose_history[current_pose] += duration
                         
                         # Update to the new pose and interrupt any ongoing speech.
-                        current_pose = latest_feedback["pose"]
+                        current_pose = feedback_data["pose"]
                         current_pose_start_time = time.time()
                         stop_current_speech()
 
@@ -210,8 +213,9 @@ def main():
                 layout["right_panel"].update(pose_table)
 
                 # Update the feedback panel with dynamic colors
-                with feedback_lock:
-                    score = latest_feedback.get('score', 0)
+                with latest_feedback['lock']:
+                    feedback_data = latest_feedback['data']
+                    score = feedback_data.get('score', 0) if feedback_data else 0
                     if score >= 8:
                         border_style = "#50fa7b"
                     elif score >= 5:
@@ -219,10 +223,10 @@ def main():
                     else:
                         border_style = "#ff5555"
 
-                    feedback_text = latest_feedback.get('feedback', 'Waiting for analysis...')
-                    pose_name = latest_feedback.get('pose', 'N/A')
+                    feedback_text = feedback_data.get('feedback', 'Waiting for analysis...') if feedback_data else 'Waiting for analysis...'
+                    pose_name = feedback_data.get('pose', 'N/A') if feedback_data else 'N/A'
                     feedback_panel = Panel(
-                        Text(f"Pose: {pose_name}\nFeedback: {feedback_text}\nScore: {latest_feedback.get('score', 0)}/10", style="white"),
+                        Text(f"Pose: {pose_name}\nFeedback: {feedback_text}\nScore: {score}/10", style="white"),
                         title="AI Feedback",
                         border_style=border_style
                     )
