@@ -42,7 +42,7 @@ Flowga is built on a modular, event-driven loop within a single Python script. T
 
 1.  **Clone the repository:**
     ```bash
-    git clone <your-repo-url>
+    git clone https://github.com/Keshy31/flowga
     cd flowga
     ```
 
