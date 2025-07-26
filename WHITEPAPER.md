@@ -33,34 +33,6 @@ This paper specifies the technical architecture and data flows designed to achie
 
 The Flowga system is designed as a modular, multi-layered pipeline that processes video data from capture to user feedback.
 
-```
-graph TD
-    A[Video Input Layer] --> B[Pose Estimation Layer];
-    B --> C[Analysis & Feedback Layer];
-    C --> D[User Interface Layer];
-
-    subgraph "Webcam Feed (OpenCV)"
-        A
-    end
-
-    subgraph "Pose Landmark Detection (MediaPipe)"
-        B
-    end
-
-    subgraph "AI Analysis & Session Logic"
-        C
-    end
-
-    subgraph "TUI, Video Overlay & TTS"
-        D
-    end
-
-    style A fill:#cde4ff
-    style B fill:#b5d8ff
-    style C fill:#9ac2ff
-    style D fill:#7eadff
-```
-
 - **Video Input Layer:** Captures the raw video feed from the user's webcam using OpenCV. This layer is responsible for frame acquisition and pre-processing.
     
 - **Pose Estimation Layer:** Utilizes Google's MediaPipe framework to detect 33 distinct 3D body landmarks from each video frame. It also performs quantitative analysis, such as calculating joint angles.
