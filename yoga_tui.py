@@ -18,6 +18,8 @@ import argparse
 import threading
 import json
 import queue
+from pathlib import Path
+import csv
 
 # Initialize Rich Console with the Dracula theme
 dracula_theme = Theme({
@@ -36,13 +38,16 @@ dracula_theme = Theme({
 })
 console = Console(theme=dracula_theme)
 
+# --- Suppress TensorFlow/Mediapipe logs ---
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 # Shared TTS engine and a lock for thread-safe operations.
 # A single engine is used to allow for speech interruption.
 engine = pyttsx3.init()
 engine_lock = threading.Lock()
 
 # Canonical landmark names from MediaPipe
-landmark_names = [
+LANDMARK_NAMES = [
     "nose", "left_eye_inner", "left_eye", "left_eye_outer", "right_eye_inner", "right_eye", "right_eye_outer",
     "left_ear", "right_ear", "mouth_left", "mouth_right", "left_shoulder", "right_shoulder", "left_elbow",
     "right_elbow", "left_wrist", "right_wrist", "left_pinky", "right_pinky", "left_index", "right_index",
@@ -62,7 +67,7 @@ def create_pose_table(results):
         return table
 
     for i, landmark in enumerate(results.pose_landmarks.landmark):
-        table.add_row(str(i), landmark_names[i], f"{landmark.visibility:.2f}")
+        table.add_row(str(i), LANDMARK_NAMES[i], f"{landmark.visibility:.2f}")
 
     return table
 
@@ -146,23 +151,113 @@ def stop_current_speech():
     except Exception as e:
         console.print(f"[bold error]Error stopping speech: {e}[/bold error]")
 
+def log_analytics_worker(log_queue, log_dir, session_id, model_name):
+    """A worker thread that logs analytics data from a queue to CSV and saves images."""
+    csv_file_path = log_dir / "session_log.csv"
+    
+    with open(csv_file_path, 'w', newline='', encoding='utf-8') as f:
+        csv_writer = csv.writer(f)
+        # Write header
+        header = ["session_id", "timestamp", "model_name", "pose_name", "feedback_text", "score", "image_path"]
+        csv_writer.writerow(header)
+
+        while True:
+            log_item = log_queue.get()
+            if log_item is None: # Sentinel value to stop the thread
+                break
+
+            try:
+                frame, landmarks, feedback = log_item
+                
+                # --- Save annotated image ---
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                image_filename = f"{timestamp}_{feedback.get('pose', 'unknown')}.jpg"
+                image_path = log_dir / image_filename
+                
+                # Draw landmarks on a copy of the frame
+                annotated_frame = frame.copy()
+                if landmarks:
+                    mp.solutions.drawing_utils.draw_landmarks(
+                        annotated_frame,
+                        landmarks,
+                        mp.solutions.pose.POSE_CONNECTIONS,
+                        mp.solutions.drawing_utils.DrawingSpec(color=(245,117,66), thickness=2, circle_radius=2),
+                        mp.solutions.drawing_utils.DrawingSpec(color=(245,66,230), thickness=2, circle_radius=2)
+                    )
+                cv2.imwrite(str(image_path), annotated_frame)
+
+                # --- Write to CSV ---
+                row = [
+                    session_id,
+                    time.time(),
+                    model_name,
+                    feedback.get('pose', 'N/A'),
+                    feedback.get('feedback', ''),
+                    feedback.get('score', 0),
+                    image_path.name
+                ]
+                csv_writer.writerow(row)
+                f.flush() # Ensure data is written immediately
+
+            except Exception as e:
+                console.print(f"[bold error]Error in logging worker: {e}[/bold error]")
+
+
+def analysis_worker(frame, landmarks):
+    """Worker thread to get pose analysis from Ollama without blocking the main loop."""
+    global latest_feedback
+
+    # Encode the image
+    _, buffer = cv2.imencode('.jpg', frame)
+    base64_image = base64.b64encode(buffer).decode('utf-8')
+    landmark_list = [f"({lm.x:.2f}, {lm.y:.2f})" for lm in landmarks.landmark]
+    landmarks_str = ", ".join(landmark_list)
+
+    try:
+        feedback = analyze_pose(args.model, base64_image, landmarks_str)
+        if feedback:
+            with feedback_lock:
+                latest_feedback = feedback
+
+            # --- Update TTS Queue with Latest Feedback ---
+            # If the queue is full (i.e., contains old feedback), clear it.
+            if tts_queue.full():
+                try:
+                    tts_queue.get_nowait() # Non-blocking get
+                except queue.Empty:
+                    pass # Ignore if already empty
+            # Put the new, most relevant feedback into the queue.
+            tts_queue.put(feedback['feedback'])
+
+            # --- Log analytics data now that we have the complete record ---
+            if args.log and log_queue is not None:
+                log_queue.put((frame, landmarks, feedback))
+
+    except Exception as e:
+        with feedback_lock:
+            latest_feedback = {"pose": "Error", "feedback": f"Failed to get analysis: {e}", "score": 0}
+
+
 def main():
     """Main function to run the Yoga TUI application."""
+    global args, console, engine, tts_queue, latest_feedback, feedback_lock, log_queue
     parser = argparse.ArgumentParser(description="Flowga - AI Yoga Pose Assistant")
-    parser.add_argument("--model", default="qwen2.5vl:7b", help="Ollama model to use for pose analysis")
+    parser.add_argument("--model", type=str, default="qwen2.5vl:7b", help="Ollama model to use for analysis")
     parser.add_argument("--camera", type=int, default=0, help="Camera index to use")
     parser.add_argument("--video_window", action="store_true", help="Show the OpenCV video window")
     parser.add_argument("--analysis_interval", type=float, default=5.0, help="Seconds between pose analyses")
+    parser.add_argument("--log", action="store_true", help="Enable analytics logging to CSV and images")
     args = parser.parse_args()
 
     ascii_art = r"""
 [bold][method]
-███████╗██╗      ██████╗ ██╗    ██╗ ██████╗  █████╗ 
-██╔════╝██║     ██╔═══██╗██║    ██║██╔════╝ ██╔══██╗
-█████╗  ██║     ██║   ██║██║ █╗ ██║██║  ███╗███████║
-██╔══╝  ██║     ██║   ██║██║███╗██║██║   ██║██╔══██║
-██║     ███████╗╚██████╔╝╚███╔███╔╝╚██████╔╝██║  ██║
-╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝[/method][/bold]
+ ███████╗██╗      ██████╗ ██╗    ██╗ ██████╗  █████╗ 
+ ██╔════╝██║     ██╔═══██╗██║    ██║██╔════╝ ██╔══██╗
+ █████╗  ██║     ██║   ██║██║ █╗ ██║██║  ███╗███████║
+ ██╔══╝  ██║     ██║   ██║██║███╗██║██║   ██║██╔══██║
+ ██║     ███████╗╚██████╔╝╚███╔███╔╝╚██████╔╝██║  ██║
+ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝
+[/method][/bold]
     """
     console.print(ascii_art)
     console.print(Text("Your Personal AI Yoga Instructor", justify="center", style="italic info"))
@@ -171,6 +266,9 @@ def main():
         console.print("Video window display is [bold success]enabled[/bold success].")
     else:
         console.print("Video window display is [bold error]disabled[/bold error].")
+    
+    if args.log:
+        console.print("Analytics logging is [bold success]enabled[/bold success].")
 
     # --- TTS Event Handler ---
     def on_finish(name, completed):
@@ -212,6 +310,21 @@ def main():
     current_pose_start_time = time.time()
     last_analysis_time = 0
     analysis_thread = None
+    logging_thread = None
+    log_queue = None
+
+    # --- Setup Logging if enabled ---
+    if args.log:
+        session_id = time.strftime("%Y%m%d-%H%M%S")
+        log_dir = Path("logs") / session_id
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_queue = queue.Queue()
+        logging_thread = threading.Thread(
+            target=log_analytics_worker, 
+            args=(log_queue, log_dir, session_id, args.model),
+            daemon=True
+        )
+        logging_thread.start()
 
     # --- Rich Layout Setup ---
     layout = Layout()
@@ -264,34 +377,15 @@ def main():
                 # --- Pose Analysis Trigger ---
                 current_time = time.time()
                 if results.pose_landmarks:
-                    if current_time - last_analysis_time > args.analysis_interval and (analysis_thread is None or not analysis_thread.is_alive()):
+                    if current_time - last_analysis_time >= args.analysis_interval:
                         last_analysis_time = current_time
 
-                        # Encode frame and prepare data for the thread
-                        _, buffer = cv2.imencode('.jpg', frame)
-                        base64_image = base64.b64encode(buffer).decode('utf-8')
-                        landmark_list = [f"({lm.x:.2f}, {lm.y:.2f})" for lm in results.pose_landmarks.landmark]
-                        landmarks_str = ", ".join(landmark_list)
-
-                        # Define the analysis task for the thread
-                        def analysis_task():
-                            feedback = analyze_pose(args.model, base64_image, landmarks_str)
-                            if feedback:
-                                with feedback_lock:
-                                    latest_feedback.update(feedback)
-                                
-                                # --- Update TTS Queue with Latest Feedback ---
-                                # If the queue is full (i.e., contains old feedback), clear it.
-                                if tts_queue.full():
-                                    try:
-                                        tts_queue.get_nowait() # Non-blocking get
-                                    except queue.Empty:
-                                        pass # Ignore if already empty
-                                # Put the new, most relevant feedback into the queue.
-                                tts_queue.put(feedback['feedback'])
-
-                        # Start the analysis in a new thread
-                        analysis_thread = threading.Thread(target=analysis_task)
+                        # This is a non-blocking call that passes copies to the thread
+                        analysis_thread = threading.Thread(
+                            target=analysis_worker, 
+                            args=(frame.copy(), results.pose_landmarks),
+                            daemon=True
+                        )
                         analysis_thread.start()
 
                 # --- Check for pose change and update history ---
@@ -351,6 +445,11 @@ def main():
         if args.video_window:
             cv2.destroyAllWindows()
         
+        # Stop logging thread
+        if logging_thread and log_queue:
+            log_queue.put(None) # Send sentinel to stop worker
+            logging_thread.join(timeout=2) # Wait for worker to finish
+
         # Stop any lingering TTS engine processes and end the loop on exit.
         try:
             engine.endLoop()
