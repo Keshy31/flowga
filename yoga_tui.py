@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich.table import Table
 from rich.theme import Theme
+from rich import box
 import time
 import os
 import base64
@@ -51,8 +52,8 @@ landmark_names = [
 
 def create_pose_table(results):
     """Creates a Rich table to display pose landmarks."""
-    table = Table(title="Pose Landmarks", show_header=True, header_style="bold keyword")
-    table.add_column("ID", style="comment", width=3)
+    table = Table(title="Pose Landmarks", show_header=True, header_style="bold #ff79c6", box=box.ROUNDED)
+    table.add_column("ID", style="#6272a4", width=3)
     table.add_column("Landmark", width=20)
     table.add_column("Visibility", justify="right")
 
@@ -65,11 +66,11 @@ def create_pose_table(results):
 
     return table
 
-def create_tracking_table(pose_history, current_pose=None, current_pose_start_time=0, is_final_summary=False):
+def create_tracking_table(console, pose_history, current_pose=None, current_pose_start_time=0, is_final_summary=False):
     """Creates a Rich table to display pose history and session tracking."""
-    table = Table(show_header=True, header_style="bold info")
+    table = Table(show_header=True, header_style="bold #8be9fd", box=box.ROUNDED)
     table.add_column("Pose", style="white")
-    table.add_column("Duration (s)", justify="right", style="success")
+    table.add_column("Duration (s)", justify="right", style="#50fa7b")
 
     temp_history = pose_history.copy()
     if current_pose and current_pose != "N/A":
@@ -80,11 +81,10 @@ def create_tracking_table(pose_history, current_pose=None, current_pose_start_ti
 
     if is_final_summary:
         table.title = "Final Session Summary"
-        table.add_column("Time (%)", justify="right", style="warning")
+        table.add_column("Time (%)", justify="right", style="#f1fa8c")
         poses_to_show = sorted_poses
         total_duration = sum(duration for _, duration in poses_to_show)
-        table.show_footer = True
-        table.footer = f"[bold]Total Poses: {len(poses_to_show)} | Total Duration: {total_duration:.1f}s[/bold]"
+        table.caption = f"[bold]Total Poses: {len(poses_to_show)} | Total Duration: {total_duration:.1f}s[/bold]"
     else:
         table.title = "Pose Session Tracking"
         # Show top 7 poses in live view
@@ -94,7 +94,7 @@ def create_tracking_table(pose_history, current_pose=None, current_pose_start_ti
     for pose, duration in poses_to_show:
         pose_name = pose
         if not is_final_summary and pose == current_pose:
-            pose_name = f"[bold info]{pose} (current)[/bold info]"
+            pose_name = f"[bold][info]{pose} (current)[/info][/bold]"
         
         row = [pose_name, f"{duration:.1f}"]
         if is_final_summary and total_duration > 0:
@@ -156,13 +156,13 @@ def main():
     args = parser.parse_args()
 
     ascii_art = r"""
-[bold method]
+[bold][method]
 ███████╗██╗      ██████╗ ██╗    ██╗ ██████╗  █████╗ 
 ██╔════╝██║     ██╔═══██╗██║    ██║██╔════╝ ██╔══██╗
 █████╗  ██║     ██║   ██║██║ █╗ ██║██║  ███╗███████║
 ██╔══╝  ██║     ██║   ██║██║███╗██║██║   ██║██╔══██║
 ██║     ███████╗╚██████╔╝╚███╔███╔╝╚██████╔╝██║  ██║
-╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝[/bold method]
+╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝[/method][/bold]
     """
     console.print(ascii_art)
     console.print(Text("Your Personal AI Yoga Instructor", justify="center", style="italic info"))
@@ -227,7 +227,7 @@ def main():
     try:
         # Start the TTS engine's non-blocking event loop
         engine.startLoop(False)
-        with Live(layout, refresh_per_second=60, screen=True) as live:
+        with Live(layout, refresh_per_second=60, screen=True, console=console) as live:
             while True:
                 # Use a non-blocking call to the TTS engine's event loop
                 engine.iterate()
@@ -316,11 +316,11 @@ def main():
                 with feedback_lock:
                     score = latest_feedback.get('score', 0)
                     if score >= 8:
-                        border_style = "success"
+                        border_style = "#50fa7b"
                     elif score >= 5:
-                        border_style = "warning"
+                        border_style = "#f1fa8c"
                     else:
-                        border_style = "error"
+                        border_style = "#ff5555"
 
                     feedback_text = latest_feedback.get('feedback', 'Waiting for analysis...')
                     pose_name = latest_feedback.get('pose', 'N/A')
@@ -332,7 +332,7 @@ def main():
                     layout["feedback"].update(feedback_panel)
 
                     # Update the tracking table
-                    tracking_table = create_tracking_table(pose_history, current_pose, current_pose_start_time)
+                    tracking_table = create_tracking_table(console, pose_history, current_pose, current_pose_start_time)
                     layout["tracking"].update(tracking_table)
 
                 # Refresh the live display
@@ -358,9 +358,9 @@ def main():
             pass
         
         # --- Display Final Session Summary ---
-        console.print("\n[bold keyword]Session Complete![/bold keyword]")
-        final_summary_table = create_tracking_table(pose_history, is_final_summary=True)
-        console.print(Panel(final_summary_table, title="Pose Session Summary", border_style="keyword"))
+        console.print("\n[bold][keyword]Session Complete![/keyword][/bold]")
+        final_summary_table = create_tracking_table(console, pose_history, is_final_summary=True)
+        console.print(Panel(final_summary_table, title="Pose Session Summary", border_style="#ff79c6"))
         console.print("\n[bold]Session ended. Goodbye![/bold]")
 
 if __name__ == "__main__":
