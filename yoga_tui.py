@@ -38,41 +38,55 @@ def create_pose_table(results):
     """Creates a Rich table to display pose landmarks."""
     table = Table(title="Pose Landmarks", show_header=True, header_style="bold magenta")
     table.add_column("ID", style="dim", width=3)
-    table.add_column("Name", width=18)
-    table.add_column("X", width=8)
-    table.add_column("Y", width=8)
-    table.add_column("Z", width=8)
-    table.add_column("Visibility", width=10)
+    table.add_column("Landmark", width=20)
+    table.add_column("Visibility", justify="right")
 
-    if results.pose_landmarks:
-        for i, (name, lm) in enumerate(zip(landmark_names, results.pose_landmarks.landmark)):
-            table.add_row(
-                str(i),
-                name,
-                f"{lm.x:.2f}",
-                f"{lm.y:.2f}",
-                f"{lm.z:.2f}",
-                f"{lm.visibility:.2f}"
-            )
-    else:
-        for i, name in enumerate(landmark_names):
-            table.add_row(str(i), name, "-", "-", "-", "-")
-    
+    if not results or not results.pose_landmarks:
+        table.add_row("-", "No pose detected", "-")
+        return table
+
+    for i, landmark in enumerate(results.pose_landmarks.landmark):
+        table.add_row(str(i), landmark_names[i], f"{landmark.visibility:.2f}")
+
     return table
 
-def create_tracking_table(pose_history, current_pose, current_pose_start_time):
-    """Creates a Rich table for pose history and current duration."""
-    table = Table(title="Pose Session Summary", show_header=True, header_style="bold cyan")
-    table.add_column("Pose", style="dim", width=20)
-    table.add_column("Total Duration (s)", width=20)
+def create_tracking_table(pose_history, current_pose=None, current_pose_start_time=0, is_final_summary=False):
+    """Creates a Rich table to display pose history and session tracking."""
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Pose", style="white")
+    table.add_column("Duration (s)", justify="right", style="green")
 
-    for pose, duration in pose_history.items():
-        table.add_row(pose, f"{duration:.1f}")
+    temp_history = pose_history.copy()
+    if current_pose and current_pose != "N/A":
+        duration = time.time() - current_pose_start_time
+        temp_history[current_pose] += duration
 
-    if current_pose != "N/A":
-        current_duration = time.time() - current_pose_start_time
-        # Add a row for the currently held pose
-        table.add_row(f"[bold green]{current_pose} (current)[/bold green]", f"{current_duration:.1f}")
+    sorted_poses = sorted(temp_history.items(), key=lambda item: item[1], reverse=True)
+
+    if is_final_summary:
+        table.title = "Final Session Summary"
+        table.add_column("Time (%)", justify="right", style="yellow")
+        poses_to_show = sorted_poses
+        total_duration = sum(duration for _, duration in poses_to_show)
+        table.show_footer = True
+        table.footer = f"[bold]Total Poses: {len(poses_to_show)} | Total Duration: {total_duration:.1f}s[/bold]"
+    else:
+        table.title = "Pose Session Tracking"
+        # Show top 7 poses in live view
+        poses_to_show = sorted_poses[:7]
+        total_duration = sum(duration for _, duration in poses_to_show)
+
+    for pose, duration in poses_to_show:
+        pose_name = pose
+        if not is_final_summary and pose == current_pose:
+            pose_name = f"[bold cyan]{pose} (current)[/bold cyan]"
+        
+        row = [pose_name, f"{duration:.1f}"]
+        if is_final_summary and total_duration > 0:
+            percentage = (duration / total_duration) * 100
+            row.append(f"{percentage:.1f}%")
+        
+        table.add_row(*row)
 
     return table
 
@@ -198,7 +212,7 @@ def main():
     try:
         # Start the TTS engine's non-blocking event loop
         engine.startLoop(False)
-        with Live(layout, refresh_per_second=30, screen=True) as live:
+        with Live(layout, refresh_per_second=60, screen=True) as live:
             while True:
                 # Use a non-blocking call to the TTS engine's event loop
                 engine.iterate()
@@ -328,10 +342,9 @@ def main():
         
         # --- Display Final Session Summary ---
         console.print("\n[bold magenta]Session Complete![/bold magenta]")
-        final_summary_table = create_tracking_table(pose_history, "N/A", 0) # Don't show current pose
-        summary_panel = Panel(final_summary_table, title="Final Session Summary", border_style="green")
-        console.print(summary_panel)
-        console.print("\n[bold green]Session ended. Goodbye![/bold green]")
+        final_summary_table = create_tracking_table(pose_history, is_final_summary=True)
+        console.print(Panel(final_summary_table, title="Pose Session Summary", border_style="magenta"))
+        console.print("\n[bold]Session ended. Goodbye![/bold]")
 
 if __name__ == "__main__":
     main()
