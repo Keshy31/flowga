@@ -15,6 +15,7 @@ from collections import defaultdict
 import argparse
 import threading
 import json
+import queue
 
 # Initialize Rich Console
 console = Console()
@@ -75,7 +76,7 @@ def analyze_pose(model_name, base64_image, landmarks_str):
     try:
         prompt = (
             "You are a yoga instructor AI. Analyze the provided image and the keypoints of the person's pose. "
-            "Identify the yoga pose. Provide specific, constructive feedback on their alignment. "
+            "Identify the yoga pose. Provide specific, constructive feedback on their alignment in **one single, concise sentence** suitable for audio playback. "
             "Finally, give a score from 1 to 10 on the accuracy of the pose. "
             f"Here are the landmarks: {landmarks_str}. "
             "Respond ONLY with a single JSON object in the format: "
@@ -101,6 +102,28 @@ def analyze_pose(model_name, base64_image, landmarks_str):
     except Exception as e:
         console.print(f"[bold red]Error during analysis: {e}[/bold red]")
         return None
+
+def speak_feedback(text):
+    """Initializes a new TTS engine for each call to speak feedback."""
+    try:
+        engine = pyttsx3.init()
+        engine.say(text)
+        engine.runAndWait()
+        engine.stop() # Cleanly stop the engine
+    except Exception as e:
+        console.print(f"[bold red]Error speaking feedback: {e}[/bold red]")
+
+def tts_worker(q):
+    """A worker thread that processes text from a queue to speak."""
+    while True:
+        try:
+            text = q.get()
+            if text is None:  # Sentinel value to exit
+                break
+            speak_feedback(text) # Engine is now created inside this function
+            q.task_done()
+        except Exception as e:
+            console.print(f"[bold red]TTS Worker Error: {e}[/bold red]")
 
 def main():
     """Main function to run the Yoga TUI application."""
@@ -131,10 +154,18 @@ def main():
     current_pose_start_time = time.time()
 
     # Display Welcome Message
-    welcome_message = Text("YOGA TUI", justify="center", style="bold magenta")
-    welcome_panel = Panel(welcome_message, title="Welcome", border_style="green")
-    console.print(welcome_panel)
-    console.print(f"Using model: [bold cyan]{args.model}[/bold cyan]")
+    ascii_art = r"""
+[bold deep_sky_blue1]
+███████╗██╗      ██████╗ ██╗    ██╗ ██████╗  █████╗ 
+██╔════╝██║     ██╔═══██╗██║    ██║██╔════╝ ██╔══██╗
+█████╗  ██║     ██║   ██║██║ █╗ ██║██║  ███╗███████║
+██╔══╝  ██║     ██║   ██║██║███╗██║██║   ██║██╔══██║
+██║     ███████╗╚██████╔╝╚███╔███╔╝╚██████╔╝██║  ██║
+╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝[/bold deep_sky_blue1]
+    """
+    console.print(ascii_art)
+    console.print(Text("Your Personal AI Yoga Instructor", justify="center", style="italic bright_blue"))
+    console.print(f"\nUsing model: [bold cyan]{args.model}[/bold cyan]")
     if args.video_window:
         console.print("Video window display is [bold green]enabled[/bold green].")
     else:
@@ -153,6 +184,12 @@ def main():
     mp_pose = mp.solutions.pose
     pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
     mp_drawing = mp.solutions.drawing_utils
+
+    # --- TTS Setup ---
+    tts_queue = queue.Queue()
+    tts_thread = threading.Thread(target=tts_worker, args=(tts_queue,))
+    tts_thread.daemon = True
+    tts_thread.start()
 
     # Analysis variables
     last_analysis_time = 0
@@ -195,6 +232,8 @@ def main():
                             feedback = analyze_pose(args.model, base64_image, landmarks_str)
                             if feedback:
                                 latest_feedback.update(feedback)
+                                # Put feedback into the queue for the TTS worker to process
+                                tts_queue.put(feedback['feedback'])
 
                         # Start the analysis in a new thread
                         analysis_thread = threading.Thread(target=analysis_task)
@@ -246,6 +285,10 @@ def main():
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
     finally:
+        # --- Signal TTS worker to exit and cleanup ---
+        tts_queue.put(None)
+        tts_thread.join(timeout=2) # Wait for the TTS thread to finish
+
         # Cleanup
         cap.release()
         if args.video_window:

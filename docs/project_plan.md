@@ -85,7 +85,7 @@ Follow this sequenced plan for incremental development. Each step includes subta
   ```
 - [x] Add argparse for flags (e.g., `--video-window`, `--model` default 'qwen2-vl:7b').
 - [x] Print welcome message in styled ASCII (use Rich Text/Panel for blocky header like "YOGA TUI").
-- **Test**: Run script; ensure no errors, see styled welcome in terminal.
+- [x] **Test**: Run script; ensure no errors, see styled welcome in terminal.
 
 ### Step 2: Input Module - OpenCV for Frame Ingestion (45 mins)
 - [x] Implement webcam capture: `cap = cv2.VideoCapture(0)`; add mirror flip `frame = cv2.flip(frame, 1)`.
@@ -99,7 +99,7 @@ Follow this sequenced plan for incremental development. Each step includes subta
 - [x] Initialize MediaPipe: `mp_pose = mp.solutions.pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)`.
 - [x] In loop: `results = mp_pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))`.
 - [x] Extract landmarks: If `results.pose_landmarks`, get list of dicts with joint names and coords.
-- [ ] For terminal: Build Rich Table for landmarks (columns: Joint, X, Y, Visibility); add simple ASCII stick figure (custom function mapping coords to char grid).
+- [x] For terminal: Build Rich Table for landmarks (columns: Joint, X, Y, Visibility); add simple ASCII stick figure (custom function mapping coords to char grid).
 - [x] For video window (if enabled): Draw landmarks using `mp.solutions.drawing_utils.draw_landmarks(frame, results.pose_landmarks)`.
 - [x] Update display: Terminal prints table; window shows overlaid frame via `cv2.imshow('Yoga Feed', frame)`.
 - [x] **Test**: Perform basic poses (e.g., T-pose). Terminal shows table/ASCII; window (if on) shows skeleton. Ensure real-time (<50ms lag).
@@ -112,26 +112,26 @@ Follow this sequenced plan for incremental development. Each step includes subta
 - [x] **Test**: Use static test image first (load via cv2.imread); then integrate to loop. Query on a yoga photo—verify sensible JSON in terminal.
 
 ### Step 5: Tracking Module - Custom Logic for Session State (45 mins)
-- [ ] Initialize state: `pose_history = defaultdict(list)`; `current_pose = None; start_time = None`.
-- [ ] Detect changes: Compare current landmarks to previous (e.g., using numpy.linalg.norm on coord diffs; threshold 0.1).
-- [ ] On change or new analysis: If new pose, log duration for old (`pose_history[old_pose].append(time.time() - start_time)`); reset current.
-- [ ] For terminal: Use Rich Progress for current timer; Table for running summary.
-- **Test**: Mock landmarks; simulate pose changes—see timer/progress update in terminal. Integrate; do real poses and check logs.
+- [x] Initialize state: `pose_history = defaultdict(list)`; `current_pose = None; start_time = None`.
+- [x] Detect changes: Compare current landmarks to previous (e.g., using numpy.linalg.norm on coord diffs; threshold 0.1).
+- [x] On change or new analysis: If new pose, log duration for old (`pose_history[old_pose].append(time.time() - start_time)`); reset current.
+- [x] For terminal: Use Rich Progress for current timer; Table for running summary.
+- [x] **Test**: Mock landmarks; simulate pose changes—see timer/progress update in terminal. Integrate; do real poses and check logs.
 
 ### Step 6: Output Module - pyttsx3 + Feedback (45 mins)
-- [ ] Initialize TTS: `engine = pyttsx3.init()`.
-- [ ] On feedback: `engine.say(feedback['feedback']); engine.runAndWait()` (use threading if blocking: `threading.Thread(target=engine.say, args=(text,)).start()`).
-- [ ] For terminal: Use Rich Live for dashboard (panels: Current Pose, Feedback [colored by score], Tracking Table).
-- [ ] For video: Overlay text on frame (e.g., `cv2.putText(frame, f"Pose: {pose} - {feedback}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)`).
-- **Test**: Generate sample feedback; hear TTS + see terminal/video updates. Ensure no loop blocking.
+- [x] Initialize TTS: `engine = pyttsx3.init()`.
+- [x] On feedback: `engine.say(feedback['feedback']); engine.runAndWait()` (use threading if blocking: `threading.Thread(target=engine.say, args=(text,)).start()`).
+- [x] For terminal: Use Rich Live for dashboard (panels: Current Pose, Feedback [colored by score], Tracking Table).
+- [x] For video: Overlay text on frame (e.g., `cv2.putText(frame, f"Pose: {pose} - {feedback}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)`).
+- [x] **Test**: Generate sample feedback; hear TTS + see terminal/video updates. Ensure no loop blocking.
 
 ### Step 7: Orchestrator - Integration and Polish (30 mins)
-- [ ] Tie in main loop: Input → Detection → (If stable) Analysis → Tracking → Output.
-- [ ] Add session start/end: Welcome screen; on exit, print full summary Table.
-- [ ] Handle errors (e.g., no detection: "No pose found" in red).
-- [ ] Aesthetic Polish: ASCII header on start; colored elements (green good, red corrections).
-- [ ] Cleanup: `cap.release(); cv2.destroyAllWindows()`.
-- **Test**: Full end-to-end run. With `--video-window`: Terminal dashboard + video overlays. Without: Pure terminal. Record demo video.
+- [x] Tie in main loop: Input → Detection → (If stable) Analysis → Tracking → Output.
+- [x] Add session start/end: Welcome screen; on exit, print full summary Table.
+- [x] Handle errors (e.g., no detection: "No pose found" in red).
+- [x] Aesthetic Polish: ASCII header on start; colored elements (green good, red corrections).
+- [x] Cleanup: `cap.release(); cv2.destroyAllWindows()`.
+- [x] **Test**: Full end-to-end run. With `--video-window`: Terminal dashboard + video overlays. Without: Pure terminal. Record demo video.
 
 ## Testing Plan
 - **Unit/Incremental**: As per each step; use sample images/poses.
