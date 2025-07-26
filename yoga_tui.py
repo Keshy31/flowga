@@ -357,10 +357,15 @@ def main():
         except Exception:
             pass
         
+        # --- Log final pose duration before creating the summary ---
+        if current_pose != "N/A":
+            duration = time.time() - current_pose_start_time
+            pose_history[current_pose] += duration
+
         # --- Display Final Session Summary ---
         console.print("\n[bold][keyword]Session Complete![/keyword][/bold]")
         final_summary_table = create_tracking_table(console, pose_history, is_final_summary=True)
-        console.print(Panel(final_summary_table, title="Pose Session Summary", border_style="#ff79c6"))
+        console.print(Panel(final_summary_table, title="Pose Session Summary", border_style="keyword"))
         console.print("\n[bold]Session ended. Goodbye![/bold]")
 
 if __name__ == "__main__":
