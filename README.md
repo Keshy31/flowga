@@ -82,6 +82,6 @@ python yoga_tui.py
 python yoga_tui.py --video-window
 ```
 
-## License
+## 📜 License
 
-This project is released into the public domain. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the `LICENSE` file for details.
