@@ -7,7 +7,6 @@ from rich.live import Live
 from rich.layout import Layout
 from rich.panel import Panel
 from rich.text import Text
-from rich.table import Table
 from rich.theme import Theme
 from rich import box
 import time
@@ -20,22 +19,13 @@ import json
 import queue
 from pathlib import Path
 import csv
+import re
+import numpy as np
+from config import dracula_theme, LANDMARK_NAMES
+from tui_components import create_pose_table, create_tracking_table
+from analysis import analysis_worker, log_session_worker
 
 # Initialize Rich Console with the Dracula theme
-dracula_theme = Theme({
-    "info": "#8be9fd",      # Cyan
-    "warning": "#f1fa8c",   # Yellow
-    "error": "#ff5555",      # Red
-    "success": "#50fa7b",   # Green
-    "comment": "#6272a4",   # Gray
-    "keyword": "#ff79c6",   # Pink
-    "string": "#f1fa8c",   # Yellow
-    "number": "#bd93f9",   # Purple
-    "class": "#50fa7b",      # Green
-    "method": "#8be9fd",   # Cyan
-    "panel_border": "#6272a4", # Gray
-    "progress_bar": "#bd93f9", # Purple
-})
 console = Console(theme=dracula_theme)
 
 # --- Suppress TensorFlow/Mediapipe logs ---
@@ -46,102 +36,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 engine = pyttsx3.init()
 engine_lock = threading.Lock()
 
-# Canonical landmark names from MediaPipe
-LANDMARK_NAMES = [
-    "nose", "left_eye_inner", "left_eye", "left_eye_outer", "right_eye_inner", "right_eye", "right_eye_outer",
-    "left_ear", "right_ear", "mouth_left", "mouth_right", "left_shoulder", "right_shoulder", "left_elbow",
-    "right_elbow", "left_wrist", "right_wrist", "left_pinky", "right_pinky", "left_index", "right_index",
-    "left_thumb", "right_thumb", "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle",
-    "right_ankle", "left_heel", "right_heel", "left_foot_index", "right_foot_index"
-]
-
-def create_pose_table(results):
-    """Creates a Rich table to display pose landmarks."""
-    table = Table(title="Pose Landmarks", show_header=True, header_style="bold #ff79c6", box=box.ROUNDED)
-    table.add_column("ID", style="#6272a4", width=3)
-    table.add_column("Landmark", width=20)
-    table.add_column("Visibility", justify="right")
-
-    if not results or not results.pose_landmarks:
-        table.add_row("-", "No pose detected", "-")
-        return table
-
-    for i, landmark in enumerate(results.pose_landmarks.landmark):
-        table.add_row(str(i), LANDMARK_NAMES[i], f"{landmark.visibility:.2f}")
-
-    return table
-
-def create_tracking_table(console, pose_history, current_pose=None, current_pose_start_time=0, is_final_summary=False):
-    """Creates a Rich table to display pose history and session tracking."""
-    table = Table(show_header=True, header_style="bold #8be9fd", box=box.ROUNDED)
-    table.add_column("Pose", style="white")
-    table.add_column("Duration (s)", justify="right", style="#50fa7b")
-
-    temp_history = pose_history.copy()
-    if current_pose and current_pose != "N/A":
-        duration = time.time() - current_pose_start_time
-        temp_history[current_pose] += duration
-
-    sorted_poses = sorted(temp_history.items(), key=lambda item: item[1], reverse=True)
-
-    if is_final_summary:
-        table.title = "Final Session Summary"
-        table.add_column("Time (%)", justify="right", style="#f1fa8c")
-        poses_to_show = sorted_poses
-        total_duration = sum(duration for _, duration in poses_to_show)
-        table.caption = f"[bold]Total Poses: {len(poses_to_show)} | Total Duration: {total_duration:.1f}s[/bold]"
-    else:
-        table.title = "Pose Session Tracking"
-        # Show top 7 poses in live view
-        poses_to_show = sorted_poses[:7]
-        total_duration = sum(duration for _, duration in poses_to_show)
-
-    for pose, duration in poses_to_show:
-        pose_name = pose
-        if not is_final_summary and pose == current_pose:
-            pose_name = f"[bold][info]{pose} (current)[/info][/bold]"
-        
-        row = [pose_name, f"{duration:.1f}"]
-        if is_final_summary and total_duration > 0:
-            percentage = (duration / total_duration) * 100
-            row.append(f"{percentage:.1f}%")
-        
-        table.add_row(*row)
-
-    return table
-
-def analyze_pose(model_name, base64_image, landmarks_str):
-    """Analyzes the pose using Ollama VLM and returns structured feedback."""
-    try:
-        prompt = (
-            "You are a yoga instructor AI. Analyze the provided image and the keypoints of the person's pose. "
-            "Identify the yoga pose. Provide specific, constructive feedback on their alignment in **one single, concise sentence** suitable for audio playback. "
-            "Finally, give a score from 1 to 10 on the accuracy of the pose. "
-            f"Here are the landmarks: {landmarks_str}. "
-            "Respond ONLY with a single JSON object in the format: "
-            '{"pose": "<pose_name>", "feedback": "<your_feedback>", "score": <score_number>}'
-        )
-
-        response = ollama.chat(
-            model=model_name,
-            messages=[
-                {
-                    'role': 'user',
-                    'content': prompt,
-                    'images': [base64_image]
-                }
-            ]
-        )
-        
-        # Extract and parse the JSON content
-        content = response['message']['content']
-        feedback_json = json.loads(content)
-        return feedback_json
-
-    except Exception as e:
-        console.print(f"[bold error]Error during analysis: {e}[/bold error]")
-        return None
-
 def stop_current_speech():
     """Stops any currently playing speech. Thread-safe."""
     try:
@@ -150,93 +44,6 @@ def stop_current_speech():
             engine.stop()
     except Exception as e:
         console.print(f"[bold error]Error stopping speech: {e}[/bold error]")
-
-def log_analytics_worker(log_queue, log_dir, session_id, model_name):
-    """A worker thread that logs analytics data from a queue to CSV and saves images."""
-    csv_file_path = log_dir / "session_log.csv"
-    
-    with open(csv_file_path, 'w', newline='', encoding='utf-8') as f:
-        csv_writer = csv.writer(f)
-        # Write header
-        header = ["session_id", "timestamp", "model_name", "pose_name", "feedback_text", "score", "image_path"]
-        csv_writer.writerow(header)
-
-        while True:
-            log_item = log_queue.get()
-            if log_item is None: # Sentinel value to stop the thread
-                break
-
-            try:
-                frame, landmarks, feedback = log_item
-                
-                # --- Save annotated image ---
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                image_filename = f"{timestamp}_{feedback.get('pose', 'unknown')}.jpg"
-                image_path = log_dir / image_filename
-                
-                # Draw landmarks on a copy of the frame
-                annotated_frame = frame.copy()
-                if landmarks:
-                    mp.solutions.drawing_utils.draw_landmarks(
-                        annotated_frame,
-                        landmarks,
-                        mp.solutions.pose.POSE_CONNECTIONS,
-                        mp.solutions.drawing_utils.DrawingSpec(color=(245,117,66), thickness=2, circle_radius=2),
-                        mp.solutions.drawing_utils.DrawingSpec(color=(245,66,230), thickness=2, circle_radius=2)
-                    )
-                cv2.imwrite(str(image_path), annotated_frame)
-
-                # --- Write to CSV ---
-                row = [
-                    session_id,
-                    time.time(),
-                    model_name,
-                    feedback.get('pose', 'N/A'),
-                    feedback.get('feedback', ''),
-                    feedback.get('score', 0),
-                    image_path.name
-                ]
-                csv_writer.writerow(row)
-                f.flush() # Ensure data is written immediately
-
-            except Exception as e:
-                console.print(f"[bold error]Error in logging worker: {e}[/bold error]")
-
-
-def analysis_worker(frame, landmarks):
-    """Worker thread to get pose analysis from Ollama without blocking the main loop."""
-    global latest_feedback
-
-    # Encode the image
-    _, buffer = cv2.imencode('.jpg', frame)
-    base64_image = base64.b64encode(buffer).decode('utf-8')
-    landmark_list = [f"({lm.x:.2f}, {lm.y:.2f})" for lm in landmarks.landmark]
-    landmarks_str = ", ".join(landmark_list)
-
-    try:
-        feedback = analyze_pose(args.model, base64_image, landmarks_str)
-        if feedback:
-            with feedback_lock:
-                latest_feedback = feedback
-
-            # --- Update TTS Queue with Latest Feedback ---
-            # If the queue is full (i.e., contains old feedback), clear it.
-            if tts_queue.full():
-                try:
-                    tts_queue.get_nowait() # Non-blocking get
-                except queue.Empty:
-                    pass # Ignore if already empty
-            # Put the new, most relevant feedback into the queue.
-            tts_queue.put(feedback['feedback'])
-
-            # --- Log analytics data now that we have the complete record ---
-            if args.log and log_queue is not None:
-                log_queue.put((frame, landmarks, feedback))
-
-    except Exception as e:
-        with feedback_lock:
-            latest_feedback = {"pose": "Error", "feedback": f"Failed to get analysis: {e}", "score": 0}
-
 
 def main():
     """Main function to run the Yoga TUI application."""
@@ -310,21 +117,17 @@ def main():
     current_pose_start_time = time.time()
     last_analysis_time = 0
     analysis_thread = None
-    logging_thread = None
     log_queue = None
 
     # --- Setup Logging if enabled ---
     if args.log:
-        session_id = time.strftime("%Y%m%d-%H%M%S")
-        log_dir = Path("logs") / session_id
-        log_dir.mkdir(parents=True, exist_ok=True)
         log_queue = queue.Queue()
-        logging_thread = threading.Thread(
-            target=log_analytics_worker, 
-            args=(log_queue, log_dir, session_id, args.model),
+        log_thread = threading.Thread(
+            target=log_session_worker, 
+            args=(log_queue, console),
             daemon=True
         )
-        logging_thread.start()
+        log_thread.start()
 
     # --- Rich Layout Setup ---
     layout = Layout()
@@ -383,7 +186,7 @@ def main():
                         # This is a non-blocking call that passes copies to the thread
                         analysis_thread = threading.Thread(
                             target=analysis_worker, 
-                            args=(frame.copy(), results.pose_landmarks),
+                            args=(frame.copy(), results.pose_landmarks, args, console, tts_queue, log_queue, latest_feedback), 
                             daemon=True
                         )
                         analysis_thread.start()
@@ -442,13 +245,14 @@ def main():
         # --- Signal TTS worker to exit and cleanup ---
         # Cleanup
         cap.release()
+
+        # Stop logging thread
+        if args.log and log_queue:
+            log_queue.put((None, None, None, None))  # Sentinel to stop logger
+            log_thread.join() # Wait for logger to finish
+
         if args.video_window:
             cv2.destroyAllWindows()
-        
-        # Stop logging thread
-        if logging_thread and log_queue:
-            log_queue.put(None) # Send sentinel to stop worker
-            logging_thread.join(timeout=2) # Wait for worker to finish
 
         # Stop any lingering TTS engine processes and end the loop on exit.
         try:
