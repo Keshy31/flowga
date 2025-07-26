@@ -1,7 +1,5 @@
 opencv-python
 mediapipe
 ollama
-rich
 pyttsx3
-numpy
-flake8
+rich
