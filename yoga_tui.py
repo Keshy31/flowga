@@ -20,6 +20,11 @@ import queue
 # Initialize Rich Console
 console = Console()
 
+# Shared TTS engine and a lock for thread-safe operations.
+# A single engine is used to allow for speech interruption.
+engine = pyttsx3.init()
+engine_lock = threading.Lock()
+
 # Canonical landmark names from MediaPipe
 landmark_names = [
     "nose", "left_eye_inner", "left_eye", "left_eye_outer", "right_eye_inner", "right_eye", "right_eye_outer",
@@ -103,57 +108,24 @@ def analyze_pose(model_name, base64_image, landmarks_str):
         console.print(f"[bold red]Error during analysis: {e}[/bold red]")
         return None
 
-def speak_feedback(text):
-    """Initializes a new TTS engine for each call to speak feedback."""
+def stop_current_speech():
+    """Stops any currently playing speech. Thread-safe."""
     try:
-        engine = pyttsx3.init()
-        engine.say(text)
-        engine.runAndWait()
-        engine.stop() # Cleanly stop the engine
+        with engine_lock:
+            # This call interrupts the engine's current speech.
+            engine.stop()
     except Exception as e:
-        console.print(f"[bold red]Error speaking feedback: {e}[/bold red]")
-
-def tts_worker(q):
-    """A worker thread that processes text from a queue to speak."""
-    while True:
-        try:
-            text = q.get()
-            if text is None:  # Sentinel value to exit
-                break
-            speak_feedback(text) # Engine is now created inside this function
-            q.task_done()
-        except Exception as e:
-            console.print(f"[bold red]TTS Worker Error: {e}[/bold red]")
+        console.print(f"[bold red]Error stopping speech: {e}[/bold red]")
 
 def main():
     """Main function to run the Yoga TUI application."""
-    parser = argparse.ArgumentParser(description="AI Powered Yoga Pose Feedback and Tracker")
-    parser.add_argument("--video-window", action="store_true", help="Display the webcam feed in a separate GUI window.")
-    parser.add_argument("--model", type=str, default="qwen2.5vl:7b", help="The Ollama VLM model to use for analysis.")
+    parser = argparse.ArgumentParser(description="Flowga - AI Yoga Pose Assistant")
+    parser.add_argument("--model", default="qwen2.5vl:7b", help="Ollama model to use for pose analysis")
+    parser.add_argument("--camera", type=int, default=0, help="Camera index to use")
+    parser.add_argument("--video_window", action="store_true", help="Show the OpenCV video window")
+    parser.add_argument("--analysis_interval", type=float, default=5.0, help="Seconds between pose analyses")
     args = parser.parse_args()
 
-    # --- UI and State Variables ---
-    # Create a layout for the dashboard
-    layout = Layout()
-    layout.split_row(
-        Layout(name="left_panel", ratio=2),
-        Layout(name="right_panel", ratio=1) # For landmark table
-    )
-    layout["left_panel"].split_column(
-        Layout(name="feedback", size=10),
-        Layout(name="tracking")
-    )
-
-    # Shared state for feedback from the analysis thread
-    latest_feedback = {"pose": "N/A", "feedback": "Waiting for analysis...", "score": 0}
-    analysis_thread = None
-
-    # --- Tracking State ---
-    pose_history = defaultdict(float)
-    current_pose = "N/A"
-    current_pose_start_time = time.time()
-
-    # Display Welcome Message
     ascii_art = r"""
 [bold deep_sky_blue1]
 ███████╗██╗      ██████╗ ██╗    ██╗ ██████╗  █████╗ 
@@ -171,54 +143,99 @@ def main():
     else:
         console.print("Video window display is [bold red]disabled[/bold red].")
 
-    # Initialize webcam
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        console.print("[bold red]Error: Could not open webcam.[/bold red]")
-        return
+    # --- TTS Event Handler ---
+    def on_finish(name, completed):
+        # This callback runs in the main thread after speech finishes.
+        # `completed` is True if the speech finished, False if interrupted.
+        if completed:
+            console.print(f"[dim]Finished speaking.[/dim]")
 
-    if args.video_window:
-        cv2.namedWindow('Yoga Feed', cv2.WINDOW_NORMAL)
+    engine.connect('finished-utterance', on_finish)
 
     # Initialize MediaPipe Pose
     mp_pose = mp.solutions.pose
-    pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
-    mp_drawing = mp.solutions.drawing_utils
+    pose = mp_pose.Pose(static_image_mode=False, model_complexity=1, enable_segmentation=False,
+                        min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    mp_drawing = mp.solutions.drawing_utils # Restore drawing utility
 
-    # --- TTS Setup ---
-    tts_queue = queue.Queue()
-    tts_thread = threading.Thread(target=tts_worker, args=(tts_queue,))
-    tts_thread.daemon = True
-    tts_thread.start()
+    # Initialize camera
+    cap = cv2.VideoCapture(args.camera)
+    if not cap.isOpened():
+        console.print("[bold red]Error: Could not open camera.[/bold red]")
+        return
 
-    # Analysis variables
+    # --- Initialize TTS queue ---
+    # The queue has a maxsize of 1 to ensure only the latest feedback is spoken.
+    # It will now be processed directly in the main loop for thread safety.
+    tts_queue = queue.Queue(maxsize=1)
+
+    # --- Shared state for analysis results ---
+    latest_feedback = {
+        "pose": "N/A",
+        "feedback": "Position yourself in frame to start.",
+        "score": 0
+    }
+    feedback_lock = threading.Lock()
+
+    # --- Pose tracking variables ---
+    pose_history = defaultdict(float)
+    current_pose = "N/A"
+    current_pose_start_time = time.time()
     last_analysis_time = 0
-    analysis_interval = 5  # seconds
+    analysis_thread = None
+
+    # --- Rich Layout Setup ---
+    layout = Layout()
+    layout.split_row(
+        Layout(name="left_panel", ratio=2),
+        Layout(name="right_panel", ratio=1)
+    )
+    layout["left_panel"].split_column(
+        Layout(name="feedback", size=8),
+        Layout(name="tracking")
+    )
 
     try:
-        with Live(layout, console=console, screen=True, auto_refresh=False) as live:
+        # Start the TTS engine's non-blocking event loop
+        engine.startLoop(False)
+        with Live(layout, refresh_per_second=30, screen=True) as live:
             while True:
-                success, frame = cap.read()
-                if not success:
-                    console.print("[bold yellow]Warning: Could not read frame from webcam.[/bold yellow]")
+                # Use a non-blocking call to the TTS engine's event loop
+                engine.iterate()
+
+                # --- Process TTS Queue in Main Thread ---
+                if not tts_queue.empty():
+                    try:
+                        text = tts_queue.get_nowait()
+                        with engine_lock:
+                            engine.say(text)
+                    except queue.Empty:
+                        pass # Ignore if queue was emptied by another part of the loop
+
+                ret, frame = cap.read()
+                if not ret:
+                    console.print("[bold red]Error: Could not read frame.[/bold red]")
                     break
 
-                # Mirror the frame for a more intuitive display
+                # Flip frame for mirror effect
                 frame = cv2.flip(frame, 1)
-
-                # Process frame with MediaPipe
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = pose.process(rgb_frame)
 
-                # Draw landmarks and run analysis
+                # --- Draw landmarks on the frame ---
+                if results.pose_landmarks and args.video_window:
+                    mp_drawing.draw_landmarks(
+                        frame,
+                        results.pose_landmarks,
+                        mp_pose.POSE_CONNECTIONS,
+                        mp_drawing.DrawingSpec(color=(245,117,66), thickness=2, circle_radius=2),
+                        mp_drawing.DrawingSpec(color=(245,66,230), thickness=2, circle_radius=2)
+                    )
+
+                # --- Pose Analysis Trigger ---
+                current_time = time.time()
                 if results.pose_landmarks:
-                    if args.video_window:
-                        mp_drawing.draw_landmarks(
-                            frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-                    
-                    current_time = time.time()
-                    # Check if it's time for a new analysis and if the previous one is done
-                    if current_time - last_analysis_time > analysis_interval and (analysis_thread is None or not analysis_thread.is_alive()):
+                    if current_time - last_analysis_time > args.analysis_interval and (analysis_thread is None or not analysis_thread.is_alive()):
                         last_analysis_time = current_time
 
                         # Encode frame and prepare data for the thread
@@ -231,8 +248,17 @@ def main():
                         def analysis_task():
                             feedback = analyze_pose(args.model, base64_image, landmarks_str)
                             if feedback:
-                                latest_feedback.update(feedback)
-                                # Put feedback into the queue for the TTS worker to process
+                                with feedback_lock:
+                                    latest_feedback.update(feedback)
+                                
+                                # --- Update TTS Queue with Latest Feedback ---
+                                # If the queue is full (i.e., contains old feedback), clear it.
+                                if tts_queue.full():
+                                    try:
+                                        tts_queue.get_nowait() # Non-blocking get
+                                    except queue.Empty:
+                                        pass # Ignore if already empty
+                                # Put the new, most relevant feedback into the queue.
                                 tts_queue.put(feedback['feedback'])
 
                         # Start the analysis in a new thread
@@ -240,15 +266,17 @@ def main():
                         analysis_thread.start()
 
                 # --- Check for pose change and update history ---
-                if latest_feedback["pose"] != "N/A" and latest_feedback["pose"] != current_pose:
-                    # Log duration for the previous pose
-                    if current_pose != "N/A":
-                        duration = time.time() - current_pose_start_time
-                        pose_history[current_pose] += duration
-                    
-                    # Update to the new pose
-                    current_pose = latest_feedback["pose"]
-                    current_pose_start_time = time.time()
+                with feedback_lock:
+                    if latest_feedback["pose"] != "N/A" and latest_feedback["pose"] != current_pose:
+                        # Log duration for the previous pose
+                        if current_pose != "N/A":
+                            duration = time.time() - current_pose_start_time
+                            pose_history[current_pose] += duration
+                        
+                        # Update to the new pose and interrupt any ongoing speech.
+                        current_pose = latest_feedback["pose"]
+                        current_pose_start_time = time.time()
+                        stop_current_speech()
 
                 # --- Update Dashboard ---
                 # Update the landmark table
@@ -256,24 +284,25 @@ def main():
                 layout["right_panel"].update(pose_table)
 
                 # Update the feedback panel with dynamic colors
-                score = latest_feedback.get('score', 0)
-                if score >= 8:
-                    border_style = "green"
-                elif score >= 5:
-                    border_style = "yellow"
-                else:
-                    border_style = "red"
+                with feedback_lock:
+                    score = latest_feedback.get('score', 0)
+                    if score >= 8:
+                        border_style = "green"
+                    elif score >= 5:
+                        border_style = "yellow"
+                    else:
+                        border_style = "red"
 
-                feedback_panel = Panel(
-                    Text(f"Pose: {latest_feedback['pose']}\nFeedback: {latest_feedback['feedback']}\nScore: {latest_feedback['score']}/10", style="white"),
-                    title="AI Feedback",
-                    border_style=border_style
-                )
-                layout["feedback"].update(feedback_panel)
+                    feedback_panel = Panel(
+                        Text(f"Pose: {latest_feedback['pose']}\nFeedback: {latest_feedback['feedback']}\nScore: {latest_feedback['score']}/10", style="white"),
+                        title="AI Feedback",
+                        border_style=border_style
+                    )
+                    layout["feedback"].update(feedback_panel)
 
-                # Update the tracking table
-                tracking_table = create_tracking_table(pose_history, current_pose, current_pose_start_time)
-                layout["tracking"].update(tracking_table)
+                    # Update the tracking table
+                    tracking_table = create_tracking_table(pose_history, current_pose, current_pose_start_time)
+                    layout["tracking"].update(tracking_table)
 
                 # Refresh the live display
                 live.refresh()
@@ -286,13 +315,16 @@ def main():
                     break
     finally:
         # --- Signal TTS worker to exit and cleanup ---
-        tts_queue.put(None)
-        tts_thread.join(timeout=2) # Wait for the TTS thread to finish
-
         # Cleanup
         cap.release()
         if args.video_window:
             cv2.destroyAllWindows()
+        
+        # Stop any lingering TTS engine processes and end the loop on exit.
+        try:
+            engine.endLoop()
+        except Exception:
+            pass
         
         # --- Display Final Session Summary ---
         console.print("\n[bold magenta]Session Complete![/bold magenta]")
